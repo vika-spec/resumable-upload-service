@@ -5,12 +5,15 @@
 ![Tests](https://img.shields.io/badge/tests-28%20passed-brightgreen)
 ![FastAPI](https://img.shields.io/badge/FastAPI-0.111-009688)
 
-A production-quality backend for resumable, chunk-based file uploads — built with FastAPI, SQLAlchemy, JWT auth, rate limiting, and structured logging.
 # 📦 Resumable File Upload Service
 
-A production-oriented **resumable file upload backend** built with FastAPI.
+> **Upload large files with confidence** — pause, resume, and never lose progress.
 
-The system allows users to upload large files in chunks, resume interrupted uploads, verify file integrity using SHA-256, and safely manage their uploaded files.
+---
+
+**Resumable File Upload Service** enables users to upload large files reliably without worrying about interruptions or failures. It allows uploads to be paused and resumed from where they left off, saving time and bandwidth. The service manages file storage, tracks upload progress, and ensures files are complete and uncorrupted before finalizing. It handles all the complexity of chunked uploads so users can focus on their content, not the technical hurdles.
+
+---
 
 It includes:
 
@@ -91,6 +94,7 @@ It includes:
                          └────────────────────┘
 
 ## Run locally
+
 
 ### 1. Clone
 
