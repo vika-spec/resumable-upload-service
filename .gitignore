@@ -1,0 +1,23 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+
+# Databases
+*.db
+*.sqlite
+
+# Local storage
+storage/
+
+# Environment secrets
+.env
+.azure-deployment.env
+.azure/
+
+# Test artifacts
+.pytest_cache/
+.coverage
+htmlcov/

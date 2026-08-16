@@ -1,0 +1,65 @@
+name: CI
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    name: Run tests (Python ${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+
+    strategy:
+      matrix:
+        python-version: ["3.11", "3.12"]
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run pytest
+        env:
+          DATABASE_URL: sqlite:///./test_uploads.db
+          SECRET_KEY:   ci-test-secret-not-for-production
+        run: pytest tests/ -v --tb=short
+
+      - name: Clean up test DB
+        if: always()
+        run: rm -f test_uploads.db
+
+  docker-build:
+    name: Docker build check
+    runs-on: ubuntu-latest
+    needs: test
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Build Docker image
+        run: docker build -t resumable-upload-service:ci .
+
+      - name: Verify image starts
+        run: |
+          docker run -d --name test-app \
+            -e DATABASE_URL=sqlite:///./uploads.db \
+            -e SECRET_KEY=ci-test-secret \
+            -p 8000:8000 \
+            resumable-upload-service:ci
+
+          sleep 5
+
+          # Check /docs is reachable (FastAPI auto-docs)
+          curl --fail http://localhost:8000/docs || exit 1
+          docker stop test-app

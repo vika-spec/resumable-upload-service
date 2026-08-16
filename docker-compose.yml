@@ -1,0 +1,40 @@
+version: "3.9"
+
+services:
+
+  # ── PostgreSQL database ──────────────────────────────────────────────────────
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER:     uploads
+      POSTGRES_PASSWORD: uploads
+      POSTGRES_DB:       uploads_db
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test:     ["CMD-SHELL", "pg_isready -U uploads -d uploads_db"]
+      interval: 5s
+      timeout:  5s
+      retries:  10
+
+  # ── FastAPI application ──────────────────────────────────────────────────────
+  app:
+    build: .
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    environment:
+      DATABASE_URL: postgresql://uploads:uploads@db:5432/uploads_db
+      SECRET_KEY:   ${SECRET_KEY:-change-this-secret-in-production}
+    volumes:
+      # Persist uploads across container restarts
+      - ./storage:/app/storage
+    depends_on:
+      db:
+        condition: service_healthy
+
+volumes:
+  postgres_data:

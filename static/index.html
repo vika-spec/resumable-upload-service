@@ -1,0 +1,829 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Resumable Upload Service</title>
+<style>
+  /* ── All styles here (same as before) ── */
+  *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+  :root{
+    --bg:#0f1117;--surface:#1a1d27;--surface2:#22263a;--border:#2e3250;
+    --accent:#6c63ff;--accent2:#a78bfa;--success:#22d3a0;--danger:#f87171;
+    --warn:#fbbf24;--text:#e2e8f0;--muted:#94a3b8;--radius:12px;
+  }
+  html{height:100%}
+  body{font-family:system-ui,sans-serif;background:var(--bg);color:var(--text);min-height:100%;padding:32px 16px 80px}
+  .wrapper{max-width:860px;margin:0 auto}
+  header{display:flex;align-items:center;justify-content:space-between;margin-bottom:36px;flex-wrap:wrap;gap:12px}
+  .header-left{display:flex;align-items:center;gap:14px}
+  .logo{width:44px;height:44px;background:linear-gradient(135deg,var(--accent),var(--accent2));border-radius:10px;display:flex;align-items:center;justify-content:center;font-size:22px}
+  header h1{font-size:1.5rem;font-weight:700}
+  header p{font-size:.82rem;color:var(--muted);margin-top:2px}
+  .user-pill{display:flex;align-items:center;gap:10px;background:var(--surface2);border:1px solid var(--border);padding:6px 14px;border-radius:99px;font-size:.84rem}
+  .user-pill span{color:var(--accent2);font-weight:600}
+  .btn-logout{background:none;border:none;color:var(--muted);cursor:pointer;font-size:.8rem;text-decoration:underline}
+  .btn-logout:hover{color:var(--danger)}
+  .modal-backdrop{position:fixed;inset:0;background:rgba(0,0,0,.7);z-index:100;display:flex;align-items:center;justify-content:center}
+  .modal{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:36px;width:100%;max-width:420px;box-shadow:0 24px 64px rgba(0,0,0,.6)}
+  .modal h2{font-size:1.3rem;margin-bottom:6px}
+  .modal p{color:var(--muted);font-size:.84rem;margin-bottom:24px}
+  .tab-row{display:flex;gap:4px;margin-bottom:24px;background:var(--surface2);padding:4px;border-radius:8px}
+  .tab{flex:1;padding:8px;border:none;background:none;color:var(--muted);border-radius:6px;cursor:pointer;font-size:.9rem;font-weight:600;transition:all .15s}
+  .tab.active{background:var(--accent);color:#fff}
+  .field{margin-bottom:14px}
+  .field label{display:block;font-size:.8rem;color:var(--muted);margin-bottom:5px}
+  .field input{width:100%;background:var(--surface2);border:1px solid var(--border);color:var(--text);border-radius:8px;padding:10px 12px;font-size:.9rem;outline:none;transition:border-color .15s}
+  .field input:focus{border-color:var(--accent)}
+  .auth-error{color:var(--danger);font-size:.82rem;margin-bottom:12px;min-height:18px}
+  .btn{padding:10px 20px;border-radius:8px;border:none;font-size:.88rem;font-weight:600;cursor:pointer;transition:opacity .15s,transform .1s}
+  .btn:hover{opacity:.88;transform:translateY(-1px)}
+  .btn:active{transform:translateY(0)}
+  .btn:disabled{opacity:.4;cursor:not-allowed;transform:none}
+  .btn-primary{background:var(--accent);color:#fff;width:100%;padding:12px}
+  .btn-success{background:var(--success);color:#0f1117}
+  .btn-danger{background:var(--danger);color:#fff}
+  .btn-muted{background:var(--surface2);color:var(--muted);border:1px solid var(--border)}
+  .btn-sm{padding:5px 10px;font-size:.75rem}
+  .card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:28px;margin-bottom:24px}
+  .card-title{font-size:.78rem;font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);margin-bottom:18px}
+  #drop-zone{border:2px dashed var(--border);border-radius:var(--radius);padding:48px 24px;text-align:center;cursor:pointer;transition:border-color .2s,background .2s}
+  #drop-zone:hover,#drop-zone.drag-over{border-color:var(--accent);background:rgba(108,99,255,.06)}
+  #drop-zone .icon{font-size:3rem;margin-bottom:12px}
+  #drop-zone h2{font-size:1.1rem;margin-bottom:6px}
+  #drop-zone p{font-size:.85rem;color:var(--muted)}
+  #file-input{display:none}
+  .options-row{display:flex;gap:16px;align-items:center;margin-top:16px;flex-wrap:wrap}
+  .opt-group{display:flex;align-items:center;gap:8px;font-size:.85rem;color:var(--muted)}
+  .opt-group select{background:var(--surface2);border:1px solid var(--border);color:var(--text);border-radius:7px;padding:5px 10px;font-size:.84rem}
+  .opt-group input[type=checkbox]{accent-color:var(--accent);width:15px;height:15px}
+  #active-section{display:none}
+  .upload-name{font-weight:600;font-size:1rem;margin-bottom:4px;word-break:break-all}
+  .upload-meta{font-size:.82rem;color:var(--muted);margin-bottom:14px}
+  .progress-bar-wrap{height:10px;background:var(--surface2);border-radius:99px;overflow:hidden;margin-bottom:8px}
+  .progress-bar-fill{height:100%;border-radius:99px;background:linear-gradient(90deg,var(--accent),var(--accent2));transition:width .3s ease;width:0%}
+  .progress-label{display:flex;justify-content:space-between;font-size:.82rem;color:var(--muted);margin-bottom:16px}
+  .chunk-grid{display:flex;flex-wrap:wrap;gap:3px;margin-bottom:18px;max-height:80px;overflow:hidden}
+  .chunk-dot{width:10px;height:10px;border-radius:2px;background:var(--surface2);transition:background .2s}
+  .chunk-dot.done{background:var(--accent)}
+  .chunk-dot.active{background:var(--accent2);animation:pulse 1s infinite}
+  .chunk-dot.failed{background:var(--danger)}
+  @keyframes pulse{0%,100%{opacity:1}50%{opacity:.4}}
+  .status-badge{display:inline-flex;align-items:center;gap:5px;padding:3px 10px;border-radius:99px;font-size:.76rem;font-weight:600;letter-spacing:.04em}
+  .badge-uploading{background:rgba(108,99,255,.18);color:var(--accent2)}
+  .badge-assembling{background:rgba(251,191,36,.14);color:var(--warn)}
+  .badge-completed{background:rgba(34,211,160,.14);color:var(--success)}
+  .badge-cancelled{background:rgba(248,113,113,.14);color:var(--danger)}
+  .badge-failed{background:rgba(248,113,113,.14);color:var(--danger)}
+  .badge-paused{background:rgba(148,163,184,.14);color:var(--muted)}
+  .stats-row{display:flex;gap:24px;margin-bottom:16px;flex-wrap:wrap}
+  .stat{font-size:.82rem}
+  .stat span{color:var(--muted)}
+  .btn-row{display:flex;gap:10px;flex-wrap:wrap}
+  .hash-box{background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:10px 14px;font-size:.78rem;color:var(--muted);word-break:break-all;margin-top:12px}
+  .hash-box strong{color:var(--success)}
+  #history-list{display:flex;flex-direction:column;gap:10px}
+  #history-list .empty{color:var(--muted);font-size:.88rem;text-align:center;padding:16px 0}
+  .hist-item{background:var(--surface2);border:1px solid var(--border);border-radius:10px;padding:14px 16px;display:flex;align-items:center;gap:14px;flex-wrap:wrap}
+  .hist-icon{font-size:1.4rem;flex-shrink:0}
+  .hist-info{flex:1;min-width:0}
+  .hist-name{font-size:.9rem;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .hist-sub{font-size:.78rem;color:var(--muted);margin-top:2px}
+  .hist-progress-wrap{height:4px;background:var(--border);border-radius:99px;margin-top:6px}
+  .hist-progress-fill{height:100%;border-radius:99px;background:var(--accent)}
+  .hist-actions{display:flex;gap:8px;flex-shrink:0;align-items:center}
+  .hist-actions .btn{padding:6px 12px;font-size:.78rem}
+  .hist-actions .btn-delete{background:var(--danger);color:#fff;padding:6px 10px;font-size:.7rem}
+  .hist-actions .btn-delete:hover{opacity:.8}
+  #toast-container{position:fixed;bottom:24px;right:24px;display:flex;flex-direction:column;gap:10px;z-index:9999}
+  .toast{background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:12px 18px;font-size:.85rem;max-width:320px;animation:slideIn .25s ease;box-shadow:0 4px 24px rgba(0,0,0,.4)}
+  .toast.success{border-color:var(--success)}
+  .toast.error{border-color:var(--danger)}
+  @keyframes slideIn{from{transform:translateX(100%);opacity:0}to{transform:translateX(0);opacity:1}}
+</style>
+</head>
+<body>
+
+<!-- ── Auth Modal ──────────────────────────────────────────────────────────── -->
+<div class="modal-backdrop" id="auth-modal">
+  <div class="modal">
+    <div style="text-align:center;font-size:2.2rem;margin-bottom:12px">📦</div>
+    <h2 style="text-align:center">Resumable Upload Service</h2>
+    <p style="text-align:center">Sign in to manage your uploads</p>
+
+    <div class="tab-row">
+      <button class="tab active" id="tab-login"    onclick="switchTab('login')">Login</button>
+      <button class="tab"        id="tab-register" onclick="switchTab('register')">Register</button>
+    </div>
+
+    <div id="form-login">
+      <div class="field"><label>Username</label><input id="l-username" placeholder="your_username" /></div>
+      <div class="field"><label>Password</label><input id="l-password" type="password" placeholder="••••••••" /></div>
+      <div class="auth-error" id="login-error"></div>
+      <button class="btn btn-primary" id="btn-login" onclick="doLogin()">Login</button>
+    </div>
+
+    <div id="form-register" style="display:none">
+      <div class="field"><label>Username</label><input id="r-username" placeholder="your_username" /></div>
+      <div class="field"><label>Email</label>   <input id="r-email"    placeholder="you@example.com" /></div>
+      <div class="field"><label>Password</label><input id="r-password" type="password" placeholder="Min 8 characters" /></div>
+      <div class="auth-error" id="register-error"></div>
+      <button class="btn btn-primary" id="btn-register" onclick="doRegister()">Create Account</button>
+    </div>
+  </div>
+</div>
+
+<!-- ── Main App ────────────────────────────────────────────────────────────── -->
+<div class="wrapper" id="app" style="display:none">
+
+  <header>
+    <div class="header-left">
+      <div class="logo">📦</div>
+      <div>
+        <h1>Resumable Upload Service</h1>
+        <p>Chunk-based · Checksum verified · Auto-resume on failure</p>
+      </div>
+    </div>
+    <div class="user-pill">
+      👤 <span id="header-username">—</span>
+      <button class="btn-logout" onclick="doLogout()">Logout</button>
+    </div>
+  </header>
+
+  <div class="card">
+    <div class="card-title">Upload a File</div>
+    <div id="drop-zone">
+      <div class="icon">🗂️</div>
+      <h2>Drop your file here</h2>
+      <p>or click to browse &nbsp;·&nbsp; Any size, any type</p>
+      <input type="file" id="file-input" />
+    </div>
+    <div class="options-row">
+      <div class="opt-group">
+        <label>Chunk size</label>
+        <select id="chunk-size">
+          <option value="1048576">1 MB</option>
+          <option value="5242880" selected>5 MB</option>
+          <option value="10485760">10 MB</option>
+          <option value="20971520">20 MB</option>
+        </select>
+      </div>
+      <div class="opt-group">
+        <label>Parallel uploads</label>
+        <select id="concurrency">
+          <option value="1">1</option>
+          <option value="3" selected>3</option>
+          <option value="5">5</option>
+        </select>
+      </div>
+      <div class="opt-group">
+        <input type="checkbox" id="verify-hash" />
+        <label for="verify-hash">Verify file integrity (SHA-256)</label>
+      </div>
+    </div>
+  </div>
+
+  <div class="card" id="active-section">
+    <div class="card-title">Active Upload</div>
+    <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:12px">
+      <div>
+        <div class="upload-name" id="active-name">—</div>
+        <div class="upload-meta" id="active-meta">—</div>
+      </div>
+      <span class="status-badge badge-uploading" id="status-badge">● Uploading</span>
+    </div>
+    <div class="progress-bar-wrap"><div class="progress-bar-fill" id="progress-fill"></div></div>
+    <div class="progress-label">
+      <span id="progress-chunks">0 / 0 chunks</span>
+      <span id="progress-pct">0%</span>
+    </div>
+    <div class="chunk-grid" id="chunk-grid"></div>
+    <div class="stats-row">
+      <div class="stat"><span>Speed: </span>  <b id="stat-speed">—</b></div>
+      <div class="stat"><span>Elapsed: </span><b id="stat-elapsed">—</b></div>
+      <div class="stat"><span>ETA: </span>    <b id="stat-eta">—</b></div>
+      <div class="stat"><span>ID: </span>     <b id="stat-id" style="font-size:.76rem;color:var(--muted)">—</b></div>
+    </div>
+    <div class="btn-row">
+      <button class="btn btn-muted"   id="btn-pause">⏸ Pause</button>
+      <button class="btn btn-primary" id="btn-resume"   style="display:none">▶ Resume</button>
+      <button class="btn btn-danger"  id="btn-cancel">✕ Cancel</button>
+      <button class="btn btn-success" id="btn-download" style="display:none">⬇ Download</button>
+      <button class="btn btn-muted"   id="btn-new"      style="display:none">＋ New Upload</button>
+    </div>
+    <div class="hash-box" id="hash-box" style="display:none"></div>
+  </div>
+
+  <div class="card">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:18px">
+      <div class="card-title" style="margin-bottom:0">Your Uploads</div>
+      <div style="display:flex;gap:8px">
+        <button class="btn btn-muted" style="padding:5px 12px;font-size:.78rem" onclick="loadHistory()">↻ Refresh</button>
+        <button class="btn btn-danger" style="padding:5px 12px;font-size:.78rem" onclick="deleteAllUploads()">🗑 Clear All</button>
+      </div>
+    </div>
+    <div id="history-list"><div class="empty">No uploads yet</div></div>
+  </div>
+</div>
+
+<div id="toast-container"></div>
+
+<script>
+// ────────────────────────────────────────────────────────────────────────────
+// Auth state
+// ────────────────────────────────────────────────────────────────────────────
+let JWT      = localStorage.getItem('jwt');
+let USERNAME = localStorage.getItem('username');
+
+function authHeaders(extra = {}) {
+  return { ...extra, ...(JWT ? { Authorization: `Bearer ${JWT}` } : {}) };
+}
+
+async function apiFetch(url, opts = {}) {
+  opts.headers = authHeaders(opts.headers || {});
+  const r = await fetch(url, opts);
+  if (r.status === 401) { doLogout(); throw new Error('Session expired — please login again'); }
+  return r;
+}
+
+function switchTab(tab) {
+  document.getElementById('form-login').style.display    = tab === 'login'    ? '' : 'none';
+  document.getElementById('form-register').style.display = tab === 'register' ? '' : 'none';
+  document.getElementById('tab-login').classList.toggle('active',    tab === 'login');
+  document.getElementById('tab-register').classList.toggle('active', tab === 'register');
+  document.getElementById('login-error').textContent    = '';
+  document.getElementById('register-error').textContent = '';
+}
+
+async function doLogin() {
+  const btn  = document.getElementById('btn-login');
+  const errEl = document.getElementById('login-error');
+  errEl.textContent = '';
+  btn.disabled = true; btn.textContent = 'Logging in…';
+  try {
+    const form = new FormData();
+    form.append('username', document.getElementById('l-username').value.trim());
+    form.append('password', document.getElementById('l-password').value);
+    const r = await fetch('/api/auth/login', { method: 'POST', body: form });
+    if (!r.ok) { errEl.textContent = (await r.json()).detail; return; }
+    const data = await r.json();
+    JWT = data.access_token;
+    USERNAME = document.getElementById('l-username').value.trim();
+    localStorage.setItem('jwt', JWT);
+    localStorage.setItem('username', USERNAME);
+    showApp();
+  } catch (e) { errEl.textContent = e.message; } finally { btn.disabled = false; btn.textContent = 'Login'; }
+}
+
+async function doRegister() {
+  const btn   = document.getElementById('btn-register');
+  const errEl = document.getElementById('register-error');
+  errEl.textContent = '';
+  btn.disabled = true; btn.textContent = 'Creating account…';
+  try {
+    const r = await fetch('/api/auth/register', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        username: document.getElementById('r-username').value.trim(),
+        email:    document.getElementById('r-email').value.trim(),
+        password: document.getElementById('r-password').value,
+      }),
+    });
+    if (!r.ok) { errEl.textContent = (await r.json()).detail; return; }
+    toast('Account created! Please login.', 'success');
+    document.getElementById('l-username').value = document.getElementById('r-username').value;
+    switchTab('login');
+  } catch (e) { errEl.textContent = e.message; } finally { btn.disabled = false; btn.textContent = 'Create Account'; }
+}
+
+function doLogout() {
+  JWT = null; USERNAME = null;
+  localStorage.removeItem('jwt'); localStorage.removeItem('username');
+  if (uploader) { uploader.cancel(); uploader = null; }
+  document.getElementById('app').style.display = 'none';
+  document.getElementById('auth-modal').style.display = 'flex';
+}
+
+function showApp() {
+  document.getElementById('auth-modal').style.display = 'none';
+  document.getElementById('app').style.display = '';
+  document.getElementById('header-username').textContent = USERNAME;
+  loadHistory();
+}
+
+['l-username','l-password'].forEach(id =>
+  document.getElementById(id).addEventListener('keydown', e => e.key === 'Enter' && doLogin())
+);
+['r-username','r-email','r-password'].forEach(id =>
+  document.getElementById(id).addEventListener('keydown', e => e.key === 'Enter' && doRegister())
+);
+if (JWT) showApp();
+
+// ────────────────────────────────────────────────────────────────────────────
+// Utilities
+// ────────────────────────────────────────────────────────────────────────────
+function fmt_bytes(b) {
+  if (b < 1024)       return b + ' B';
+  if (b < 1048576)    return (b/1024).toFixed(1) + ' KB';
+  if (b < 1073741824) return (b/1048576).toFixed(1) + ' MB';
+  return (b/1073741824).toFixed(2) + ' GB';
+}
+function fmt_time(s) {
+  if (!isFinite(s)||s<0) return '—';
+  s = Math.round(s);
+  if (s < 60)   return s + 's';
+  if (s < 3600) return Math.floor(s/60) + 'm ' + (s%60) + 's';
+  return Math.floor(s/3600) + 'h ' + Math.floor((s%3600)/60) + 'm';
+}
+async function sha256_hex(buffer) {
+  const hash = await crypto.subtle.digest('SHA-256', buffer);
+  return Array.from(new Uint8Array(hash)).map(b=>b.toString(16).padStart(2,'0')).join('');
+}
+function toast(msg, type='info', ms=4000) {
+  const el = document.createElement('div');
+  el.className = 'toast ' + type;
+  el.textContent = msg;
+  document.getElementById('toast-container').appendChild(el);
+  setTimeout(() => el.remove(), ms);
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// ResumableUploader (with fix for empty chunk)
+// ────────────────────────────────────────────────────────────────────────────
+class ResumableUploader {
+  constructor(file, { chunkSize=5*1024*1024, concurrency=3, verifyHash=false,
+                      onProgress, onComplete, onError }={}) {
+    this.file        = file;
+    this.chunkSize   = chunkSize;
+    this.concurrency = concurrency;
+    this.verifyHash  = verifyHash;
+    this.onProgress  = onProgress || (()=>{});
+    this.onComplete  = onComplete || (()=>{});
+    this.onError     = onError    || (()=>{});
+    this.uploadId    = null;
+    this.totalChunks = 0;
+    this.doneChunks  = new Set();
+    this.activeChunks= new Set();
+    this._paused     = false;
+    this._cancelled  = false;
+    this._startTime  = null;
+    this._bytesDone  = 0;
+  }
+
+  async start() {
+    this._startTime = Date.now();
+    let fileHash = undefined;
+    if (this.verifyHash) {
+      toast('Computing file hash…','info',3000);
+      fileHash = await sha256_hex(await this.file.arrayBuffer());
+    }
+    const r = await apiFetch('/api/uploads', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ filename:this.file.name, size:this.file.size,
+                              chunk_size:this.chunkSize, file_hash:fileHash||null }),
+    });
+    if (!r.ok) throw new Error('Failed to create upload session');
+    const data = await r.json();
+    this.uploadId    = data.upload_id;
+    this.totalChunks = data.total_chunks;
+    this._bytesDone  = 0;
+    localStorage.setItem('last_upload', JSON.stringify({
+      uploadId:this.uploadId,
+      filename:this.file.name,
+      totalChunks:this.totalChunks,
+      chunkSize:this.chunkSize  // ← store chunk size for resume
+    }));
+    return this._runUpload([...Array(this.totalChunks)].map((_,i)=>i+1));
+  }
+
+  async resumeFromId(uploadId) {
+    this.uploadId = uploadId;
+    const r    = await apiFetch(`/api/uploads/${uploadId}`);
+    const data = await r.json();
+    this.totalChunks = data.total_chunks;
+    // Ensure we use the original chunk size from the upload metadata
+    // We stored it in localStorage when the upload started.
+    const stored = JSON.parse(localStorage.getItem('last_upload') || '{}');
+    if (stored.uploadId === uploadId && stored.chunkSize) {
+      this.chunkSize = stored.chunkSize;
+      // Also update the UI dropdown to match (optional)
+      document.getElementById('chunk-size').value = String(stored.chunkSize);
+    } else {
+      // Fallback: use current dropdown value
+      this.chunkSize = parseInt(document.getElementById('chunk-size').value);
+    }
+
+    const missing = new Set(data.missing_chunks);
+    for (let i=1;i<=this.totalChunks;i++) if (!missing.has(i)) this.doneChunks.add(i);
+    this._bytesDone = this.doneChunks.size * this.chunkSize;
+    return this._runUpload([...missing]);
+  }
+
+  pause()  { this._paused = true; }
+  resume() { this._paused = false; }
+  cancel() {
+    this._cancelled = true;
+    apiFetch(`/api/uploads/${this.uploadId}`,{method:'DELETE'}).catch(()=>{});
+  }
+
+  async _runUpload(chunksToSend) {
+    const queue = [...chunksToSend];
+    const worker = async () => {
+      while (queue.length > 0) {
+        if (this._cancelled) return;
+        while (this._paused) await this._sleep(300);
+        const n = queue.shift();
+        if (n === undefined) return;
+        this.activeChunks.add(n);
+        try {
+          await this._uploadChunk(n);
+        } catch(err) {
+          this.activeChunks.delete(n);
+          queue.unshift(n);
+          // If the error is "empty chunk", we throw immediately to avoid infinite loops
+          if (err.message && err.message.includes('empty')) throw err;
+          // Otherwise, retry after a delay
+          await this._sleep(1000);
+          continue;
+        }
+        this.activeChunks.delete(n);
+        this.doneChunks.add(n);
+        this._bytesDone += this.chunkSize;
+        this.onProgress({
+          done:this.doneChunks.size, total:this.totalChunks,
+          active:new Set(this.activeChunks), doneSet:new Set(this.doneChunks),
+          elapsed:(Date.now()-this._startTime)/1000,
+          bytesDone:Math.min(this._bytesDone,this.file.size),
+        });
+      }
+    };
+    await Promise.all(Array.from({length:this.concurrency},()=>worker()));
+    if (this._cancelled) return;
+    const r = await apiFetch(`/api/uploads/${this.uploadId}/complete`,{method:'POST'});
+    const result = await r.json();
+    if (!r.ok) throw new Error(result.detail||'Completion failed');
+    this.onComplete(result);
+  }
+
+  async _uploadChunk(n) {
+    const start = (n-1)*this.chunkSize;
+    const end   = Math.min(start+this.chunkSize, this.file.size);
+    // Prevent sending an empty chunk
+    if (start >= this.file.size) {
+      throw new Error(`Empty chunk: start=${start} >= file size=${this.file.size}`);
+    }
+    const buf   = await this.file.slice(start,end).arrayBuffer();
+    if (buf.byteLength === 0) {
+      throw new Error(`Empty chunk (0 bytes) for chunk ${n}`);
+    }
+    const cs    = await sha256_hex(buf);
+    for (let attempt=0; attempt<4; attempt++) {
+      if (this._cancelled) return;
+      try {
+        const r = await apiFetch(`/api/uploads/${this.uploadId}/chunks/${n}`,{
+          method:'PUT',
+          headers:{'Content-Type':'application/octet-stream','X-Checksum':cs},
+          body:buf,
+        });
+        if (r.ok) return;
+        const err = await r.json().catch(()=>({}));
+        throw new Error(err.detail||`HTTP ${r.status}`);
+      } catch(e) {
+        if (attempt===3) throw e;
+        await this._sleep(800*Math.pow(2,attempt));
+      }
+    }
+  }
+
+  _sleep(ms){ return new Promise(r=>setTimeout(r,ms)); }
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// UI Controller
+// ────────────────────────────────────────────────────────────────────────────
+let uploader = null;
+const dropZone = document.getElementById('drop-zone');
+const fileInput = document.getElementById('file-input');
+
+dropZone.addEventListener('click',     ()=>fileInput.click());
+dropZone.addEventListener('dragover',  e=>{e.preventDefault();dropZone.classList.add('drag-over')});
+dropZone.addEventListener('dragleave', ()=>dropZone.classList.remove('drag-over'));
+dropZone.addEventListener('drop',e=>{
+  e.preventDefault(); dropZone.classList.remove('drag-over');
+  if(e.dataTransfer.files[0]) startUpload(e.dataTransfer.files[0]);
+});
+fileInput.addEventListener('change',()=>{ if(fileInput.files[0]) startUpload(fileInput.files[0]); fileInput.value=''; });
+
+document.getElementById('btn-pause').addEventListener('click',()=>{
+  uploader?.pause(); setBadge('paused');
+  document.getElementById('btn-pause').style.display  = 'none';
+  document.getElementById('btn-resume').style.display = 'inline-flex';
+});
+document.getElementById('btn-resume').addEventListener('click',()=>{
+  uploader?.resume(); setBadge('uploading');
+  document.getElementById('btn-resume').style.display = 'none';
+  document.getElementById('btn-pause').style.display  = 'inline-flex';
+});
+document.getElementById('btn-cancel').addEventListener('click',()=>{
+  if(!confirm('Cancel this upload?')) return;
+  uploader?.cancel();
+  resetUI(true);
+  document.getElementById('btn-new').style.display = 'inline-flex';
+  toast('Upload cancelled','error');
+  loadHistory();
+});
+document.getElementById('btn-new').addEventListener('click',()=>resetUI(true));
+document.getElementById('btn-download').addEventListener('click',()=>{
+  if(uploader?.uploadId) window.location.href=`/api/uploads/${uploader.uploadId}/download`;
+});
+
+async function startUpload(file) {
+  resetUI(false);
+  showActiveSection(file);
+  uploader = new ResumableUploader(file,{
+    chunkSize:   parseInt(document.getElementById('chunk-size').value),
+    concurrency: parseInt(document.getElementById('concurrency').value),
+    verifyHash:  document.getElementById('verify-hash').checked,
+    onProgress:  updateProgress, onComplete: handleComplete, onError: handleError,
+  });
+  try { await uploader.start(); }
+  catch(err) { handleError(err); }
+}
+
+async function resumeUpload(uploadId, filename) {
+  toast('Select the same file to resume…','info',5000);
+  const inp = document.createElement('input');
+  inp.type  = 'file';
+  inp.onchange = async () => {
+    const file = inp.files[0];
+    if (!file) {
+      toast('No file selected', 'error');
+      return;
+    }
+    // Verify that the file name matches (optional but helpful)
+    if (file.name !== filename) {
+      toast(`Warning: selected file name "${file.name}" differs from original "${filename}". Resume may fail.`, 'error');
+    }
+    resetUI(false);
+    showActiveSection(file, uploadId);
+    uploader = new ResumableUploader(file,{
+      // chunkSize will be set inside resumeFromId using stored value
+      concurrency: parseInt(document.getElementById('concurrency').value),
+      onProgress:  updateProgress, onComplete: handleComplete, onError: handleError,
+    });
+    try {
+      // Pass the uploadId and let the uploader restore its chunk size from localStorage
+      await uploader.resumeFromId(uploadId);
+    } catch(err) {
+      handleError(err);
+    }
+  };
+  inp.click();
+}
+
+// ── Delete Functions ────────────────────────────────────────────────────
+
+async function deleteUpload(uploadId) {
+  if (!confirm('Delete this file from storage? This cannot be undone!')) {
+    return;
+  }
+
+  try {
+    const r = await apiFetch(
+      `/api/uploads/${uploadId}`,
+      { method: 'DELETE' }
+    );
+
+    if (!r.ok) {
+      const text = await r.text();
+      throw new Error(`HTTP ${r.status}: ${text}`);
+    }
+
+    // If the deleted upload is currently active,
+    // stop the uploader without sending another DELETE request.
+    if (uploader?.uploadId === uploadId) {
+      uploader._cancelled = true;
+      resetUI(true);
+    }
+
+    // Re-fetch from backend so the deleted file disappears
+    // from the history list.
+    await loadHistory();
+
+    toast('🗑️ File deleted permanently', 'success');
+
+  } catch (e) {
+    console.error('Delete failed:', e);
+    toast('❌ Delete failed: ' + e.message, 'error');
+  }
+}
+
+async function deleteAllUploads() {
+  if (!confirm('⚠️ Delete ALL your files from storage? This cannot be undone!')) {
+    return;
+  }
+
+  try {
+    const r = await apiFetch('/api/uploads');
+
+    if (!r.ok) {
+      throw new Error('Failed to fetch uploads');
+    }
+
+    const uploads = await r.json();
+
+    if (uploads.length === 0) {
+      toast('No files to delete', 'info');
+      return;
+    }
+
+    let deleted = 0;
+
+    for (const u of uploads) {
+      const del = await apiFetch(
+        `/api/uploads/${u.upload_id}`,
+        { method: 'DELETE' }
+      );
+
+      if (del.ok) {
+        deleted++;
+      }
+    }
+
+    uploader = null;
+    resetUI(true);
+
+    await loadHistory();
+
+    toast(`🗑️ Deleted ${deleted} files permanently`, 'success');
+
+  } catch (e) {
+    console.error('Delete all failed:', e);
+    toast('❌ Delete all failed: ' + e.message, 'error');
+  }
+}
+
+
+function showActiveSection(file, uploadId=null) {
+  document.getElementById('active-section').style.display = 'block';
+  document.getElementById('active-name').textContent = file.name;
+  document.getElementById('active-meta').textContent =
+    fmt_bytes(file.size) + (uploadId ? `  ·  Resuming ${uploadId}` : '');
+  document.getElementById('stat-id').textContent = uploadId || '…';
+  setBadge('uploading');
+}
+
+function buildChunkGrid(total) {
+  const grid = document.getElementById('chunk-grid');
+  grid.innerHTML = '';
+  for(let i=1; i<=Math.min(total,200); i++) {
+    const d = document.createElement('div');
+    d.className = 'chunk-dot'; d.id = `dot-${i}`;
+    grid.appendChild(d);
+  }
+}
+
+function updateProgress({done,total,active,doneSet,elapsed,bytesDone}) {
+  const pct = total ? (done/total*100) : 0;
+  document.getElementById('progress-fill').style.width   = pct+'%';
+  document.getElementById('progress-pct').textContent    = pct.toFixed(1)+'%';
+  document.getElementById('progress-chunks').textContent = `${done} / ${total} chunks`;
+  const speed     = elapsed>0 ? bytesDone/elapsed : 0;
+  const remaining = (uploader?.file.size||0) - bytesDone;
+  const eta       = speed>0 ? remaining/speed : Infinity;
+  document.getElementById('stat-speed').textContent   = fmt_bytes(speed)+'/s';
+  document.getElementById('stat-elapsed').textContent = fmt_time(elapsed);
+  document.getElementById('stat-eta').textContent     = fmt_time(eta);
+  if(uploader?.uploadId) document.getElementById('stat-id').textContent = uploader.uploadId;
+  for(let i=1;i<=Math.min(total,200);i++) {
+    const dot = document.getElementById(`dot-${i}`);
+    if(!dot) continue;
+    dot.className = doneSet.has(i) ? 'chunk-dot done' : active.has(i) ? 'chunk-dot active' : 'chunk-dot';
+  }
+}
+
+function handleComplete(data) {
+  document.getElementById('progress-fill').style.width = '100%';
+  document.getElementById('progress-pct').textContent  = '100%';
+  document.getElementById('progress-chunks').textContent =
+    `${uploader?.totalChunks} / ${uploader?.totalChunks} chunks`;
+  setBadge('completed');
+  toast('✅ Upload complete!','success');
+  showNewUploadBtn();
+  document.getElementById('btn-pause').style.display   = 'none';
+  document.getElementById('btn-cancel').style.display  = 'none';
+  document.getElementById('btn-download').style.display= 'inline-flex';
+  if (data.final_hash) {
+    const hb = document.getElementById('hash-box');
+    hb.style.display = 'block';
+    hb.innerHTML = data.hash_verified === true
+      ? `<strong>✅ Integrity verified</strong><br>SHA-256: ${data.final_hash}`
+      : data.hash_verified === false
+      ? `<span style="color:var(--danger)">❌ Hash mismatch — file may be corrupted</span>`
+      : `SHA-256: ${data.final_hash}`;
+  }
+  loadHistory();
+}
+
+function handleError(err) {
+  console.error(err);
+  setBadge('failed');
+  toast('❌ '+(err.message||'Upload failed'),'error',6000);
+  showNewUploadBtn();
+}
+
+const BADGE_LABELS = {
+  uploading:'● Uploading',assembling:'⚙ Assembling',completed:'✓ Completed',
+  cancelled:'✕ Cancelled',failed:'✕ Failed',paused:'⏸ Paused'
+};
+function setBadge(status) {
+  const b = document.getElementById('status-badge');
+  b.className = `status-badge badge-${status}`;
+  b.textContent = BADGE_LABELS[status]||status;
+}
+function showNewUploadBtn() { document.getElementById('btn-new').style.display = 'inline-flex'; }
+
+function resetUI(showDrop=true) {
+  uploader = null;
+  if(showDrop) document.getElementById('active-section').style.display = 'none';
+  document.getElementById('progress-fill').style.width   = '0%';
+  document.getElementById('progress-pct').textContent    = '0%';
+  document.getElementById('progress-chunks').textContent = '0 / 0 chunks';
+  document.getElementById('chunk-grid').innerHTML        = '';
+  document.getElementById('hash-box').style.display      = 'none';
+  document.getElementById('btn-pause').style.display     = 'inline-flex';
+  document.getElementById('btn-resume').style.display    = 'none';
+  document.getElementById('btn-cancel').style.display    = 'inline-flex';
+  document.getElementById('btn-download').style.display  = 'none';
+  document.getElementById('btn-new').style.display       = 'none';
+  ['stat-speed','stat-elapsed','stat-eta'].forEach(id=>document.getElementById(id).textContent='—');
+  document.getElementById('stat-id').textContent = '—';
+}
+
+// Patch: store chunk size after start
+const _origStart = ResumableUploader.prototype.start;
+ResumableUploader.prototype.start = async function() {
+  const p = _origStart.call(this);
+  setTimeout(()=>{
+    if(this.totalChunks) buildChunkGrid(this.totalChunks);
+    document.getElementById('stat-id').textContent = this.uploadId||'…';
+  }, 600);
+  return p;
+};
+
+// ────────────────────────────────────────────────────────────────────────────
+// History
+// ────────────────────────────────────────────────────────────────────────────
+const STATUS_ICONS = {
+  uploading:'🔄',assembling:'⚙️',completed:'✅',cancelled:'❌',failed:'⚠️',expired:'🕐'
+};
+
+async function loadHistory() {
+  try {
+    const r = await apiFetch('/api/uploads');
+    if (!r.ok) return;
+    const uploads = await r.json();
+    const list    = document.getElementById('history-list');
+    if (!uploads.length) { list.innerHTML='<div class="empty">No uploads yet</div>'; return; }
+    list.innerHTML = '';
+    for (const u of uploads) {
+      const item = document.createElement('div');
+      item.className = 'hist-item';
+      const bar = u.status==='completed' ? 100 : u.progress;
+      const isCompleted = u.status === 'completed';
+      const isUploading = u.status === 'uploading';
+      
+      let actionsHTML = '';
+      if (isCompleted) {
+        actionsHTML += `<button class="btn btn-success" onclick="window.location.href='/api/uploads/${u.upload_id}/download'">⬇</button>`;
+      }
+      if (isUploading) {
+        actionsHTML += `<button class="btn btn-primary" onclick="resumeUpload('${u.upload_id}','${u.filename}')">▶ Resume</button>`;
+      }
+      actionsHTML += `<button class="btn btn-danger btn-sm" onclick="deleteUpload('${u.upload_id}')">🗑</button>`;
+      
+      item.innerHTML = `
+        <div class="hist-icon">${STATUS_ICONS[u.status]||'📄'}</div>
+        <div class="hist-info">
+          <div class="hist-name" title="${u.filename}">${u.filename}</div>
+          <div class="hist-sub">
+            ${fmt_bytes(u.size)} &nbsp;·&nbsp;
+            <span class="status-badge badge-${u.status}" style="font-size:.7rem;padding:2px 7px">${u.status}</span>
+            &nbsp;·&nbsp; ${u.uploaded_chunks}/${u.total_chunks} chunks
+            &nbsp;·&nbsp; ${new Date(u.created_at).toLocaleString()}
+          </div>
+          <div class="hist-progress-wrap"><div class="hist-progress-fill" style="width:${bar}%"></div></div>
+        </div>
+        <div class="hist-actions">
+          ${actionsHTML}
+        </div>`;
+      list.appendChild(item);
+    }
+  } catch(e) {}
+}
+
+setInterval(loadHistory, 10000);
+</script>
+</body>
+</html>
