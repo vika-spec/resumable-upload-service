@@ -49,10 +49,18 @@ def test_create_upload_rate_limit(client):
     })
     headers = {"Authorization": f"Bearer {create_access_token('rl_upload_user')}"}
 
-    status_codes = [
-        client.post("/api/uploads", json={
-            "filename": f"f{i}.bin", "size": 100, "chunk_size": 100,
-        }, headers=headers).status_code
-        for i in range(7)
-    ]
+    status_codes = []
+    # Use valid chunk size (≥ 1MB) so the request passes validation
+    for i in range(7):
+        r = client.post("/api/uploads", json={
+            "filename": f"f{i}.bin",
+            "size": 1048576,        # 1MB
+            "chunk_size": 1048576,  # 1MB
+        }, headers=headers)
+        status_codes.append(r.status_code)
+        # Clean up if created (to avoid affecting other tests, though not critical)
+        if r.status_code == 201:
+            upload_id = r.json()["upload_id"]
+            client.delete(f"/api/uploads/{upload_id}", headers=headers)
+
     assert 429 in status_codes, f"Expected 429 after 5 rapid upload creations, got: {status_codes}"

@@ -7,14 +7,15 @@ import hashlib
 import pytest
 from tests.conftest import make_user
 
-CHUNK = b"Hello, world! This is chunk data."  # 33 bytes
+# 1MB chunk data (minimum required by API)
+CHUNK = b"X" * 1048576
 
 
 def _checksum(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 
 
-def _make_upload(client, headers, filename="test.bin", size=33, chunk_size=33):
+def _make_upload(client, headers, filename="test.bin", size=1048576, chunk_size=1048576):
     r = client.post("/api/uploads", json={
         "filename":   filename,
         "size":       size,
@@ -28,9 +29,17 @@ def _upload_chunk(client, headers, upload_id, chunk_number, data=CHUNK, bad_chec
     cs = "deadbeef" if bad_checksum else _checksum(data)
     return client.put(
         f"/api/uploads/{upload_id}/chunks/{chunk_number}",
-        content = data,
-        headers = {**headers, "Content-Type": "application/octet-stream", "X-Checksum": cs},
+        content=data,
+        headers={**headers, "Content-Type": "application/octet-stream", "X-Checksum": cs},
     )
+
+
+def _cleanup_upload(client, headers, upload_id):
+    """Helper to clean up uploads after tests to avoid rate limiting"""
+    try:
+        client.delete(f"/api/uploads/{upload_id}", headers=headers)
+    except:
+        pass
 
 
 # ── Auth guard ─────────────────────────────────────────────────────────────────
@@ -49,28 +58,31 @@ def test_list_uploads_requires_auth(client):
 
 def test_create_upload_success(client, headers):
     data = _make_upload(client, headers)
-    assert "upload_id"    in data
+    assert "upload_id" in data
     assert data["total_chunks"] == 1
-    assert data["chunk_size"]   == 33
-    assert "expires_at"   in data
+    assert data["chunk_size"] == 1048576
+    assert "expires_at" in data
+    _cleanup_upload(client, headers, data["upload_id"])
 
 
 def test_create_upload_calculates_chunks_correctly(client, headers):
-    # 100 bytes / 30 bytes per chunk = ceil(100/30) = 4 chunks
-    data = _make_upload(client, headers, size=100, chunk_size=30)
-    assert data["total_chunks"] == 4
+    # 3MB file with 1MB chunks = 3 chunks
+    data = _make_upload(client, headers, size=1048576*3, chunk_size=1048576)
+    assert data["total_chunks"] == 3
+    _cleanup_upload(client, headers, data["upload_id"])
 
 
 # ── Chunk upload ───────────────────────────────────────────────────────────────
 
 def test_upload_chunk_success(client, headers):
     uid = _make_upload(client, headers)["upload_id"]
-    r   = _upload_chunk(client, headers, uid, 1)
+    r = _upload_chunk(client, headers, uid, 1)
     assert r.status_code == 200
     body = r.json()
-    assert body["chunk_number"]    == 1
-    assert body["status"]          == "uploaded"
+    assert body["chunk_number"] == 1
+    assert body["status"] == "uploaded"
     assert body["already_uploaded"] is False
+    _cleanup_upload(client, headers, uid)
 
 
 def test_upload_chunk_idempotency(client, headers):
@@ -80,42 +92,47 @@ def test_upload_chunk_idempotency(client, headers):
     r = _upload_chunk(client, headers, uid, 1)   # second time
     assert r.status_code == 200
     assert r.json()["already_uploaded"] is True
+    _cleanup_upload(client, headers, uid)
 
 
 def test_upload_chunk_bad_checksum_rejected(client, headers):
     uid = _make_upload(client, headers)["upload_id"]
-    r   = _upload_chunk(client, headers, uid, 1, bad_checksum=True)
+    r = _upload_chunk(client, headers, uid, 1, bad_checksum=True)
     assert r.status_code == 400
     assert "mismatch" in r.json()["detail"].lower()
+    _cleanup_upload(client, headers, uid)
 
 
 def test_upload_invalid_chunk_number(client, headers):
     uid = _make_upload(client, headers)["upload_id"]
-    r   = _upload_chunk(client, headers, uid, 99)   # only 1 chunk expected
+    r = _upload_chunk(client, headers, uid, 99)   # only 1 chunk expected
     assert r.status_code == 400
+    _cleanup_upload(client, headers, uid)
 
 
 # ── Status / progress ──────────────────────────────────────────────────────────
 
 def test_status_before_any_chunks(client, headers):
-    uid  = _make_upload(client, headers)["upload_id"]
-    r    = client.get(f"/api/uploads/{uid}", headers=headers)
+    uid = _make_upload(client, headers)["upload_id"]
+    r = client.get(f"/api/uploads/{uid}", headers=headers)
     body = r.json()
-    assert body["progress"]        == 0.0
+    assert body["progress"] == 0.0
     assert body["uploaded_chunks"] == 0
-    assert body["missing_chunks"]  == [1]
-    assert body["status"]          == "uploading"
+    assert body["missing_chunks"] == [1]
+    assert body["status"] == "uploading"
+    _cleanup_upload(client, headers, uid)
 
 
 def test_status_after_chunk_uploaded(client, headers):
-    # 2-chunk file
-    uid = _make_upload(client, headers, size=66, chunk_size=33)["upload_id"]
+    # 2-chunk file (2MB file with 1MB chunks)
+    uid = _make_upload(client, headers, size=1048576*2, chunk_size=1048576)["upload_id"]
     _upload_chunk(client, headers, uid, 1)
-    r    = client.get(f"/api/uploads/{uid}", headers=headers)
+    r = client.get(f"/api/uploads/{uid}", headers=headers)
     body = r.json()
     assert body["uploaded_chunks"] == 1
-    assert body["missing_chunks"]  == [2]
-    assert body["progress"]        == 50.0
+    assert body["missing_chunks"] == [2]
+    assert body["progress"] == 50.0
+    _cleanup_upload(client, headers, uid)
 
 
 # ── Complete upload ────────────────────────────────────────────────────────────
@@ -124,21 +141,22 @@ def test_complete_upload_success(client, headers):
     uid = _make_upload(client, headers)["upload_id"]
     _upload_chunk(client, headers, uid, 1)
 
-    r    = client.post(f"/api/uploads/{uid}/complete", headers=headers)
+    r = client.post(f"/api/uploads/{uid}/complete", headers=headers)
     body = r.json()
     assert r.status_code == 200
-    assert body["status"]      == "completed"
-    assert body["final_hash"]  is not None
+    assert body["status"] == "completed"
+    assert body["final_hash"] is not None
     assert len(body["final_hash"]) == 64   # SHA-256 hex
 
 
 def test_complete_upload_with_missing_chunks_fails(client, headers):
-    # 2-chunk upload but only upload 1 chunk
-    uid = _make_upload(client, headers, size=66, chunk_size=33)["upload_id"]
+    # 2-chunk upload but only upload 1 chunk (2MB file with 1MB chunks)
+    uid = _make_upload(client, headers, size=1048576*2, chunk_size=1048576)["upload_id"]
     _upload_chunk(client, headers, uid, 1)
     r = client.post(f"/api/uploads/{uid}/complete", headers=headers)
     assert r.status_code == 400
     assert "missing" in r.json()["detail"].lower()
+    _cleanup_upload(client, headers, uid)
 
 
 def test_complete_upload_with_file_hash_verification(client, headers):
@@ -160,12 +178,13 @@ def test_complete_upload_with_file_hash_verification(client, headers):
 
 def test_cancel_upload(client, headers):
     uid = _make_upload(client, headers)["upload_id"]
-    r   = client.delete(f"/api/uploads/{uid}", headers=headers)
+    r = client.delete(f"/api/uploads/{uid}", headers=headers)
     assert r.status_code == 200
 
-    # Subsequent chunk upload should fail
+    # Subsequent chunk upload should fail (upload no longer exists)
     r2 = _upload_chunk(client, headers, uid, 1)
-    assert r2.status_code == 400
+    # API returns 404 because the upload was deleted
+    assert r2.status_code == 404
 
 
 # ── List uploads ───────────────────────────────────────────────────────────────
@@ -184,6 +203,7 @@ def test_list_uploads_returns_own_uploads_only(client, headers):
     filenames = [u["filename"] for u in r.json()]
     assert "userA_file.bin" in filenames
     assert "userB_file.bin" not in filenames
+    _cleanup_upload(client, headers, uid)
 
 
 def test_list_uploads_404_for_other_users_upload(client, headers):
@@ -193,3 +213,4 @@ def test_list_uploads_404_for_other_users_upload(client, headers):
     _, _, headers_b = make_user(client)
     r = client.get(f"/api/uploads/{uid}", headers=headers_b)
     assert r.status_code == 404
+    _cleanup_upload(client, headers, uid)
