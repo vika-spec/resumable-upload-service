@@ -4,6 +4,7 @@ Authentication endpoints.
 POST /api/auth/register
 POST /api/auth/login
 GET  /api/auth/me
+POST /api/auth/refresh   # <-- New endpoint
 """
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
@@ -22,7 +23,6 @@ from services.auth_service import (
     hash_password,
     verify_password,
 )
-
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 log = get_logger(__name__)
@@ -57,38 +57,21 @@ def register(
     db: Session = Depends(get_db),
 ):
     """Create a new user account."""
-
     if db.query(User).filter(User.username == body.username).first():
-        raise HTTPException(
-            status_code=400,
-            detail="Username already taken",
-        )
-
+        raise HTTPException(status_code=400, detail="Username already taken")
     if db.query(User).filter(User.email == body.email).first():
-        raise HTTPException(
-            status_code=400,
-            detail="Email already registered",
-        )
+        raise HTTPException(status_code=400, detail="Email already registered")
 
     user = User(
         username=body.username,
         email=str(body.email).lower(),
         hashed_password=hash_password(body.password),
     )
-
     db.add(user)
     db.commit()
 
-    log.info(
-        "user_registered",
-        username=body.username,
-        ip=get_remote_address(request),
-    )
-
-    return {
-        "message": "Account created successfully",
-        "username": body.username,
-    }
+    log.info("user_registered", username=body.username, ip=get_remote_address(request))
+    return {"message": "Account created successfully", "username": body.username}
 
 
 # ── Login ─────────────────────────────────────────────────────────────────────
@@ -101,38 +84,17 @@ def login(
     db: Session = Depends(get_db),
 ):
     """Login with username/password."""
-
-    user = (
-        db.query(User)
-        .filter(User.username == form.username)
-        .first()
-    )
-
-    if not user or not verify_password(
-        form.password,
-        user.hashed_password,
-    ):
-        log.warning(
-            "login_failed",
-            username=form.username,
-            ip=get_remote_address(request),
-        )
-
+    user = db.query(User).filter(User.username == form.username).first()
+    if not user or not verify_password(form.password, user.hashed_password):
+        log.warning("login_failed", username=form.username, ip=get_remote_address(request))
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Incorrect username or password",
             headers={"WWW-Authenticate": "Bearer"},
         )
 
-    log.info(
-        "login_success",
-        username=user.username,
-        ip=get_remote_address(request),
-    )
-
-    return TokenResponse(
-        access_token=create_access_token(user.username)
-    )
+    log.info("login_success", username=user.username, ip=get_remote_address(request))
+    return TokenResponse(access_token=create_access_token(user.username))
 
 
 # ── Me ────────────────────────────────────────────────────────────────────────
@@ -148,3 +110,21 @@ def me(
         username=current_user.username,
         email=current_user.email,
     )
+
+
+# ── Refresh Token ─────────────────────────────────────────────────────────────
+# <-- NEW ENDPOINT
+
+@router.post("/refresh", response_model=TokenResponse)
+@limiter.limit("5/minute")
+def refresh_token(
+    request: Request,
+    current_user: User = Depends(get_current_user),
+):
+    """
+    Refresh the access token.
+    Returns a new JWT with updated expiry.
+    """
+    new_token = create_access_token(current_user.username)
+    log.info("token_refreshed", username=current_user.username, ip=get_remote_address(request))
+    return TokenResponse(access_token=new_token)
