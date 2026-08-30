@@ -6,6 +6,7 @@ Covers: create, chunk upload, idempotency, bad checksum,
 import hashlib
 import pytest
 from tests.conftest import make_user
+import time
 
 # 1MB chunk data (minimum required by API)
 CHUNK = b"X" * 1048576
@@ -214,3 +215,75 @@ def test_list_uploads_404_for_other_users_upload(client, headers):
     r = client.get(f"/api/uploads/{uid}", headers=headers_b)
     assert r.status_code == 404
     _cleanup_upload(client, headers, uid)
+
+def test_background_assembly_completes(client, headers):
+    """Upload should complete via background task."""
+    # Create 2MB file with 1MB chunks
+    uid = _make_upload(client, headers, size=1048576*2, chunk_size=1048576)["upload_id"]
+    
+    # Upload both chunks
+    _upload_chunk(client, headers, uid, 1)
+    _upload_chunk(client, headers, uid, 2)
+    
+    # Complete upload (should return 202)
+    r = client.post(f"/api/uploads/{uid}/complete", headers=headers)
+    assert r.status_code == 202  # Accepted
+    body = r.json()
+    assert body["status"] == "assembling"
+    
+    # Poll status until complete (or timeout after 10 seconds)
+    max_attempts = 20
+    completed = False
+    for i in range(max_attempts):
+        time.sleep(0.5)
+        r = client.get(f"/api/uploads/{uid}", headers=headers)
+        if r.json()["status"] == "completed":
+            completed = True
+            break
+    
+    assert completed, "Upload should complete within timeout"
+    assert r.json()["final_hash"] is not None
+
+
+def test_background_assembly_without_chunks_fails(client, headers):
+    """Complete without uploading chunks should return 400."""
+    uid = _make_upload(client, headers)["upload_id"]
+    r = client.post(f"/api/uploads/{uid}/complete", headers=headers)
+    assert r.status_code == 400
+    assert "missing" in r.json()["detail"].lower()
+
+
+def test_background_assembly_duplicate_request(client, headers):
+    """Calling complete twice should handle gracefully."""
+    uid = _make_upload(client, headers)["upload_id"]
+    _upload_chunk(client, headers, uid, 1)
+    
+    # First call
+    r1 = client.post(f"/api/uploads/{uid}/complete", headers=headers)
+    assert r1.status_code == 202
+    
+    # Second call immediately
+    r2 = client.post(f"/api/uploads/{uid}/complete", headers=headers)
+    assert r2.status_code == 202
+    assert "already being assembled" in r2.json()["message"]
+
+
+def test_daily_upload_limit(client, headers):
+    """Should enforce daily upload limit."""
+    from routes.uploads import QUOTA_DAILY_UPLOADS
+    
+    # Create more uploads than daily limit
+    for i in range(QUOTA_DAILY_UPLOADS + 1):
+        r = client.post("/api/uploads", json={
+            "filename": f"file_{i}.bin",
+            "size": 1048576,
+            "chunk_size": 1048576,
+        }, headers=headers)
+        
+        if i >= QUOTA_DAILY_UPLOADS:
+            assert r.status_code == 429
+            assert "daily upload limit" in r.json()["detail"].lower()
+            break
+        else:
+            assert r.status_code == 201
+            _cleanup_upload(client, headers, r.json()["upload_id"])
