@@ -742,7 +742,7 @@ async def complete_upload(
 
 # ── Delete ─────────────────────────────────────────────────────────────────────
 
-@router.delete(
+'''@router.delete(
     "/uploads/{upload_id}"
 )
 @limiter.limit("20/minute")
@@ -822,7 +822,44 @@ async def delete_upload(
         raise HTTPException(
             500,
             "Delete failed.",
+        )'''
+@router.delete("/uploads/{upload_id}")
+@limiter.limit("20/minute")
+async def delete_upload(
+    request: Request,
+    upload_id: str,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    upload = _get_upload_locked(upload_id, db, user)
+
+    if upload.status == UploadStatus.assembling:
+        db.rollback()
+        raise HTTPException(409, "Upload is currently being assembled.")
+
+    filename = upload.filename
+
+    try:
+        # 1. Delete physical files first
+        await storage.delete_upload(upload_id)
+
+        # 2. Now delete database records in the same transaction
+        db.query(UploadChunk).filter(UploadChunk.upload_id == upload_id).delete(synchronize_session=False)
+        db.delete(upload)
+        db.commit()
+
+        log.info("upload_deleted", upload_id=upload_id, user=user.username, filename=filename)
+        return {"message": "Upload deleted permanently", "upload_id": upload_id}
+
+    except Exception as exc:
+        db.rollback()
+        # Mark as failed so cleanup worker can retry later
+        db.query(Upload).filter(Upload.upload_id == upload_id).update(
+            {"status": UploadStatus.failed}
         )
+        db.commit()
+        log.error("upload_delete_failed", upload_id=upload_id, error=str(exc))
+        raise HTTPException(500, "Delete failed.")
 
 
 # ── Download ───────────────────────────────────────────────────────────────────
