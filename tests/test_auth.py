@@ -2,8 +2,8 @@
 Tests for POST /api/auth/register, POST /api/auth/login, GET /api/auth/me
 """
 import pytest
-import jwt
 
+from jose import jwt  
 
 # ── Register ───────────────────────────────────────────────────────────────────
 
