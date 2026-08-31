@@ -38,14 +38,20 @@ def test_admin_stats_success(client):
 
 def test_admin_stats_rate_limit(client):
     """Admin stats endpoint should be rate limited (10/minute)."""
-    # Register admin
+    from limiter_config import limiter
+    # Enable rate limiter and reset counters
+    limiter.reset()          # ✅ FIXED
+    limiter.enabled = True
+    
+    # Register the admin user (must match ADMIN_USERNAME env var, default is "admin")
+    admin_username = "admin"
     client.post("/api/auth/register", json={
-        "username": "admin2",
-        "email": "admin2@example.com",
+        "username": admin_username,
+        "email": "admin@example.com",
         "password": "securepass123",
     })
     r = client.post("/api/auth/login", data={
-        "username": "admin2",
+        "username": admin_username,
         "password": "securepass123",
     })
     token = r.json()["access_token"]
@@ -59,3 +65,6 @@ def test_admin_stats_rate_limit(client):
     
     # At least one should be 429
     assert 429 in status_codes
+    
+    # Disable limiter again for other tests
+    limiter.enabled = False
