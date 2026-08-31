@@ -7,6 +7,7 @@ Only test_rate_limiting.py re-enables it for its own scope.
 import os
 import uuid
 import time
+import shutil
 
 os.environ.setdefault("DATABASE_URL", "sqlite:///./test_uploads.db")
 os.environ.setdefault("SECRET_KEY",   "test-secret-key-not-for-production")
@@ -53,24 +54,26 @@ def setup_db():
     # 2. Dispose the engine to close all connections
     test_engine.dispose()
     
-    # 3. Wait a moment for connections to fully close
-    time.sleep(0.2)
+    # 3. Wait for connections to fully close
+    time.sleep(0.5)
     
     # 4. Drop all tables
     Base.metadata.drop_all(bind=test_engine)
     
-    # 5. Remove the database file
-    try:
-        if os.path.exists("test_uploads.db"):
-            os.remove("test_uploads.db")
-    except PermissionError:
-        # If file is still locked, try one more time
-        time.sleep(0.5)
+    # 5. Remove the database file – retry a few times (especially on Windows)
+    for attempt in range(3):
         try:
             if os.path.exists("test_uploads.db"):
                 os.remove("test_uploads.db")
+            break
         except PermissionError:
-            # Ignore if still can't delete - it will be cleaned up on next run
+            time.sleep(0.5)
+    # Also remove any journal or wal files
+    for ext in [".db-journal", ".db-wal", ".db-shm"]:
+        try:
+            if os.path.exists(f"test_uploads{ext}"):
+                os.remove(f"test_uploads{ext}")
+        except:
             pass
 
 

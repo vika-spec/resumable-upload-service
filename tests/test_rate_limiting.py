@@ -9,11 +9,11 @@ from limiter_config import limiter
 @pytest.fixture(autouse=True)
 def enable_limiter():
     """Enable rate limiter + fresh counters only for tests in this module."""
-    limiter._storage.reset()   # clear any counts from previous tests
+    limiter.reset()          # ✅ FIXED: use reset() method
     limiter.enabled = True
     yield
     limiter.enabled = False    # restore disabled state for all other test modules
-    limiter._storage.reset()   # clear counts so upload tests aren't affected
+    limiter.reset()            # ✅ FIXED: clear counts so upload tests aren't affected
 
 
 def test_login_rate_limit(client):
