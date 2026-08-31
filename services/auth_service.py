@@ -3,7 +3,8 @@ Auth service: password hashing with argon2 (winner of Password Hashing Competiti
 + JWT creation/decoding.
 """
 import os
-from datetime import datetime, timedelta
+import uuid
+from datetime import datetime, timedelta, timezone  # ✅ use timezone-aware
 
 from jose import JWTError, jwt
 from passlib.context import CryptContext
@@ -12,8 +13,6 @@ SECRET_KEY         = os.getenv("SECRET_KEY", "dev-secret-CHANGE-IN-PRODUCTION")
 ALGORITHM          = "HS256"
 TOKEN_EXPIRY_HOURS = int(os.getenv("TOKEN_EXPIRY_HOURS", "24"))
 
-# Argon2: winner of the Password Hashing Competition (2015).
-# Far stronger than bcrypt or sha256_crypt against GPU cracking attacks.
 pwd_context = CryptContext(schemes=["argon2"], deprecated="auto")
 
 
@@ -26,8 +25,12 @@ def verify_password(plain: str, hashed: str) -> bool:
 
 
 def create_access_token(username: str) -> str:
-    expire  = datetime.utcnow() + timedelta(hours=TOKEN_EXPIRY_HOURS)
-    payload = {"sub": username, "exp": expire}
+    expire  = datetime.now(timezone.utc) + timedelta(hours=TOKEN_EXPIRY_HOURS)  # ✅ use timezone-aware
+    payload = {
+        "sub": username,
+        "exp": expire,
+        "jti": uuid.uuid4().hex,   #  unique ID to guarantee a new token each time
+    }
     return jwt.encode(payload, SECRET_KEY, algorithm=ALGORITHM)
 
 

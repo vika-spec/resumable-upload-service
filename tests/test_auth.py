@@ -1,5 +1,5 @@
 """
-Tests for POST /api/auth/register, POST /api/auth/login, GET /api/auth/me
+Tests for POST /api/auth/register, POST /api/auth/login, GET /api/auth/me, POST /api/auth/refresh
 """
 import pytest
 
@@ -93,28 +93,37 @@ def test_me_with_bad_token_is_401(client):
     r = client.get("/api/auth/me", headers={"Authorization": "Bearer not.a.real.token"})
     assert r.status_code == 401
 
-## tests added on the date 30/08/2026 vikash kumar
+
+# ── Refresh Token ─────────────────────────────────────────────────────────────
+
 def test_refresh_token_success(client, auth):
-    """Should return a new token when given a valid token."""
     username, password, headers = auth
+    # Get current token
+    old_token = headers["Authorization"].replace("Bearer ", "")
     r = client.post("/api/auth/refresh", headers=headers)
     assert r.status_code == 200
     body = r.json()
     assert "access_token" in body
     assert body["token_type"] == "bearer"
-    # New token should be different from old one
-    old_token = headers["Authorization"].replace("Bearer ", "")
-    assert body["access_token"] != old_token
+    new_token = body["access_token"]
+    # ✅ Ensure the new token is different from the old one (thanks to jti)
+    assert new_token != old_token
 
 
 def test_refresh_token_rate_limit(client, auth):
     """Refresh endpoint should be rate limited (5/minute)."""
+    from limiter_config import limiter
+    limiter.reset()
+    limiter.enabled = True
+
     username, password, headers = auth
     status_codes = []
     for _ in range(7):
         r = client.post("/api/auth/refresh", headers=headers)
         status_codes.append(r.status_code)
     assert 429 in status_codes
+
+    limiter.enabled = False
 
 
 def test_refresh_token_with_invalid_token(client):
@@ -125,9 +134,6 @@ def test_refresh_token_with_invalid_token(client):
 
 def test_refresh_token_with_expired_token(client):
     """Should reject expired tokens."""
-    # Create expired token (if possible in test)
-    # Or just ensure the endpoint validates token properly
-    import jwt
     from services.auth_service import SECRET_KEY
     expired_token = jwt.encode(
         {"sub": "testuser", "exp": 0},  # Already expired
