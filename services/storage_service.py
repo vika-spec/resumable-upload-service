@@ -15,12 +15,17 @@ import hashlib
 import io
 import os
 import shutil
-from typing import AsyncIterator
+import uuid
+from typing import AsyncIterator, Optional
 import aiofiles
 
 # ── Local-disk paths (dev only) ───────────────────────────────────────────────
 CHUNKS_DIR    = "./storage/chunks"
 COMPLETED_DIR = "./storage/completed"
+
+
+class ChecksumMismatch(ValueError):
+    """The bytes received for a chunk do not match the client's X-Checksum."""
 
 
 class StorageService:
@@ -55,17 +60,25 @@ class StorageService:
         chunk_number: int,
         stream: AsyncIterator[bytes],
         max_size: int,
+        expected_checksum: Optional[str] = None,
     ) -> tuple[str, int]:
         """
         Read `stream` piece by piece → compute SHA-256 → write to storage.
         Returns (checksum_hex, total_bytes).
-        Raises ValueError for empty or oversized chunks.
+
+        If `expected_checksum` is given it is verified BEFORE the chunk is
+        stored, so a corrupted chunk is rejected without touching the rest of
+        the upload and the client can simply re-send that one chunk.
+
+        Raises ValueError for empty or oversized chunks, and ChecksumMismatch
+        (a ValueError subclass) when the checksum does not match.
         """
-        sha256 = hashlib.sha256()
-        total  = 0
+        sha256   = hashlib.sha256()
+        total    = 0
+        expected = expected_checksum.lower() if expected_checksum else None
 
         if self.using_azure():
-            # ── Azure: buffer → upload ─────────────────────────────────────
+            # ── Azure: buffer → verify → upload ────────────────────────────
             buf = io.BytesIO()
             async for piece in stream:
                 buf.write(piece)
@@ -75,6 +88,12 @@ class StorageService:
                     raise ValueError("Chunk exceeds MAX_CHUNK_SIZE")
             if total == 0:
                 raise ValueError("Empty chunk")
+
+            computed = sha256.hexdigest()
+            if expected and computed != expected:
+                raise ChecksumMismatch(
+                    f"Checksum mismatch. Expected {expected}, got {computed}."
+                )
             buf.seek(0)
 
             from azure.storage.blob.aio import BlobServiceClient
@@ -82,9 +101,11 @@ class StorageService:
                 await self._blob(client, f"chunks/{upload_id}/chunk_{chunk_number:06d}") \
                          .upload_blob(buf, overwrite=True, length=total)
         else:
-            # ── Local: stream → temp file → atomic rename ──────────────────
+            # ── Local: stream → unique temp file → verify → atomic rename ──
+            # The temp name is unique per request so two concurrent PUTs of the
+            # same chunk can never write into the same file.
             chunk_path = self._chunk_path(upload_id, chunk_number)
-            temp_path  = chunk_path + ".tmp"
+            temp_path  = f"{chunk_path}.{uuid.uuid4().hex}.tmp"
             try:
                 async with aiofiles.open(temp_path, "wb") as f:
                     async for piece in stream:
@@ -93,14 +114,22 @@ class StorageService:
                         total += len(piece)
                         if total > max_size:
                             raise ValueError("Chunk exceeds MAX_CHUNK_SIZE")
-            except Exception:
+
+                if total == 0:
+                    raise ValueError("Empty chunk")
+
+                computed = sha256.hexdigest()
+                if expected and computed != expected:
+                    raise ChecksumMismatch(
+                        f"Checksum mismatch. Expected {expected}, got {computed}."
+                    )
+                os.replace(temp_path, chunk_path)
+            except BaseException:
+                # BaseException so a client disconnect (task cancellation) also
+                # removes the partial temp file instead of leaking it.
                 if os.path.exists(temp_path):
                     os.remove(temp_path)
                 raise
-            if total == 0:
-                os.remove(temp_path)
-                raise ValueError("Empty chunk")
-            os.rename(temp_path, chunk_path)
 
         return sha256.hexdigest(), total
 

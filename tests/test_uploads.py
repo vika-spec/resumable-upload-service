@@ -117,6 +117,41 @@ def test_upload_chunk_bad_checksum_rejected(client, headers):
     _cleanup_upload(client, headers, uid)
 
 
+def test_bad_checksum_does_not_destroy_the_upload(client, headers):
+    """
+    A corrupted chunk must be rejected on its own. The upload session and the
+    chunks already stored stay intact, and re-sending the chunk succeeds.
+    """
+    uid = _make_upload(client, headers, size=1048576 * 2)["upload_id"]
+
+    assert _upload_chunk(client, headers, uid, 1).status_code == 200      # good
+    assert _upload_chunk(client, headers, uid, 2, bad_checksum=True).status_code == 400
+
+    # Session still alive, chunk 1 still recorded, only chunk 2 missing
+    r = client.get(f"/api/uploads/{uid}", headers=headers)
+    assert r.status_code == 200
+    body = r.json()
+    assert body["status"] == "uploading"
+    assert body["uploaded_chunks"] == 1
+    assert body["missing_chunks"] == [2]
+
+    # Retrying the same chunk with the correct checksum works
+    r = _upload_chunk(client, headers, uid, 2)
+    assert r.status_code == 200
+    assert r.json()["status"] == "uploaded"
+    _cleanup_upload(client, headers, uid)
+
+
+def test_rejected_chunk_leaves_no_temp_files(client, headers):
+    """A rejected chunk must not leave partial/temp files behind."""
+    import os
+    uid = _make_upload(client, headers)["upload_id"]
+    _upload_chunk(client, headers, uid, 1, bad_checksum=True)
+    chunk_dir = os.path.join("storage", "chunks", uid)
+    assert os.listdir(chunk_dir) == []
+    _cleanup_upload(client, headers, uid)
+
+
 def test_upload_invalid_chunk_number(client, headers):
     uid = _make_upload(client, headers)["upload_id"]
     r = _upload_chunk(client, headers, uid, 99)   # only 1 chunk expected

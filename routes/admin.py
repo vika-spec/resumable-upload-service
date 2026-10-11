@@ -15,14 +15,13 @@ from database import get_db
 from deps import get_current_user
 from logger import get_logger
 from models import Upload, UploadChunk, UploadStatus, User
+from services.auth_service import ADMIN_USERNAME
 from services.storage_service import StorageService
 from limiter_config import limiter  # <-- Added import
 
 router = APIRouter(prefix="/admin", tags=["admin"])
 storage = StorageService()
 log = get_logger(__name__)
-
-ADMIN_USERNAME = os.getenv("ADMIN_USERNAME", "admin")
 
 # Mirrors the limits set in uploads.py (read from same env vars)
 QUOTA_GLOBAL_GB = int(os.getenv("QUOTA_GLOBAL_GB", "40"))

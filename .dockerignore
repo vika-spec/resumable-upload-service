@@ -1,0 +1,15 @@
+# Keep secrets, local state and dev clutter out of the image
+.git
+.github
+.env
+.env.*
+!.env.example
+.venv
+venv
+__pycache__
+*.pyc
+*.db
+*.sqlite
+storage
+.pytest_cache
+tests

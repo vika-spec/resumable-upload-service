@@ -46,7 +46,7 @@ from schemas import (
     CreateUploadResponse,
     UploadStatusResponse,
 )
-from services.storage_service import StorageService
+from services.storage_service import ChecksumMismatch, StorageService
 
 
 router = APIRouter()
@@ -54,10 +54,27 @@ storage = StorageService()
 log = get_logger(__name__)
 
 
+def _utcnow() -> datetime:
+    """Naive UTC "now" for database columns.
+
+    The DateTime columns are timezone-naive and the models/cleanup worker use
+    naive UTC, so every value written to or compared against the DB goes
+    through here. This avoids tz-aware values being shifted by the database
+    server's local timezone on PostgreSQL.
+    """
+    return datetime.now(timezone.utc).replace(tzinfo=None)
+
+
 # ── Limits ────────────────────────────────────────────────────────────────────
 
 UPLOAD_EXPIRY_HOURS = int(
     os.getenv("UPLOAD_EXPIRY_HOURS", "2")
+)
+
+# How long an upload may stay in "assembling" before the cleanup worker assumes
+# the server restarted mid-assembly and hands the upload back to the client.
+ASSEMBLY_TIMEOUT_MINUTES = int(
+    os.getenv("ASSEMBLY_TIMEOUT_MINUTES", "60")
 )
 
 MAX_CHUNK_SIZE = int(
@@ -208,7 +225,7 @@ async def assemble_upload_in_background(upload_id: str, user_id: int, filename: 
 
         upload.status = UploadStatus.completed
         upload.final_hash = final_hash
-        upload.completed_at = datetime.now(timezone.utc)
+        upload.completed_at = _utcnow()
         db.commit()
 
         log.info("background_assembly_completed", upload_id=upload_id, hash=final_hash)
@@ -251,7 +268,7 @@ async def create_upload(
     _lock_global_quota(db)
 
     # Daily session limit
-    today_start = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
+    today_start = _utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
     daily_count = db.query(func.count(Upload.upload_id)).filter(
         Upload.user_id == user.id,
         Upload.created_at >= today_start,
@@ -292,7 +309,7 @@ async def create_upload(
     # Create upload
     upload_id = f"up_{uuid.uuid4().hex[:16]}"
     total_chunks = math.ceil(body.size / body.chunk_size)
-    expires_at = datetime.now(timezone.utc) + timedelta(hours=UPLOAD_EXPIRY_HOURS)
+    expires_at = _utcnow() + timedelta(hours=UPLOAD_EXPIRY_HOURS)
 
     upload = Upload(
         upload_id=upload_id,
@@ -320,7 +337,7 @@ async def create_upload(
         upload_id=upload_id,
         total_chunks=total_chunks,
         chunk_size=body.chunk_size,
-        expires_at=expires_at,
+        expires_at=expires_at.replace(tzinfo=timezone.utc),  # explicit UTC for clients
     )
 
 
@@ -356,22 +373,22 @@ async def upload_chunk(
 
     db.commit()
 
-    # Stream chunk
+    # Stream chunk. The checksum is verified inside the storage layer before the
+    # chunk is stored, so a corrupted chunk is rejected on its own and the
+    # client can simply re-send it; the rest of the upload is untouched.
     try:
         computed, total_size = await storage.save_chunk_from_stream(
             upload_id,
             chunk_number,
             request.stream(),
             MAX_CHUNK_SIZE,
+            expected_checksum=x_checksum,
         )
+    except ChecksumMismatch as exc:
+        log.warning("checksum_mismatch", upload_id=upload_id, chunk=chunk_number)
+        raise HTTPException(400, str(exc))
     except ValueError as exc:
         raise HTTPException(400, str(exc))
-
-    # Verify checksum
-    if x_checksum and computed != x_checksum.lower():
-        await storage.delete_upload(upload_id)
-        log.warning("checksum_mismatch", upload_id=upload_id, chunk=chunk_number)
-        raise HTTPException(400, f"Checksum mismatch. Expected {x_checksum}, got {computed}.")
 
     # Save record
     db.add(UploadChunk(
@@ -464,8 +481,11 @@ async def complete_upload(
         db.rollback()
         raise HTTPException(400, f"Missing chunks: {missing[:10]}" + (f" (+{len(missing)-10} more)" if len(missing) > 10 else ""))
 
-    # Mark as assembling and commit
+    # Mark as assembling and commit. expires_at doubles as this state's
+    # deadline: if the server dies mid-assembly the cleanup worker uses it to
+    # recover the upload instead of leaving it stuck in "assembling" forever.
     upload.status = UploadStatus.assembling
+    upload.expires_at = _utcnow() + timedelta(minutes=ASSEMBLY_TIMEOUT_MINUTES)
     db.commit()
 
     # Offload assembly to background

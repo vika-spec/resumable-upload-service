@@ -1,8 +1,24 @@
 """
 Tests for admin endpoints.
+
+The admin account is NOT created through /register (that username is
+reserved). It is created at app startup from ADMIN_USERNAME / ADMIN_PASSWORD,
+which tests/conftest.py sets before the app is imported.
 """
 import pytest
 from tests.conftest import make_user
+
+ADMIN_USERNAME = "admin"
+ADMIN_PASSWORD = "securepass123"
+
+
+def _admin_headers(client):
+    r = client.post("/api/auth/login", data={
+        "username": ADMIN_USERNAME,
+        "password": ADMIN_PASSWORD,
+    })
+    assert r.status_code == 200, r.text
+    return {"Authorization": f"Bearer {r.json()['access_token']}"}
 
 
 def test_admin_stats_requires_admin(client, headers):
@@ -11,23 +27,20 @@ def test_admin_stats_requires_admin(client, headers):
     assert r.status_code == 403
 
 
+def test_admin_username_cannot_be_registered(client):
+    """Registering the admin username must fail, in any letter case."""
+    for name in ("admin", "Admin", "ADMIN"):
+        r = client.post("/api/auth/register", json={
+            "username": name,
+            "email": f"{name.lower()}-attacker@example.com",
+            "password": "attacker-password-1",
+        })
+        assert r.status_code == 400, f"{name!r} was accepted"
+
+
 def test_admin_stats_success(client):
-    """Admin should access stats."""
-    # Register and login as admin
-    client.post("/api/auth/register", json={
-        "username": "admin",
-        "email": "admin@example.com",
-        "password": "securepass123",
-    })
-    r = client.post("/api/auth/login", data={
-        "username": "admin",
-        "password": "securepass123",
-    })
-    token = r.json()["access_token"]
-    headers = {"Authorization": f"Bearer {token}"}
-    
-    # Access admin stats
-    r = client.get("/api/admin/stats", headers=headers)
+    """The bootstrapped admin account can access stats."""
+    r = client.get("/api/admin/stats", headers=_admin_headers(client))
     assert r.status_code == 200
     body = r.json()
     assert "users" in body
@@ -39,32 +52,19 @@ def test_admin_stats_success(client):
 def test_admin_stats_rate_limit(client):
     """Admin stats endpoint should be rate limited (10/minute)."""
     from limiter_config import limiter
-    # Enable rate limiter and reset counters
-    limiter.reset()          # ✅ FIXED
+    limiter.reset()
     limiter.enabled = True
-    
-    # Register the admin user (must match ADMIN_USERNAME env var, default is "admin")
-    admin_username = "admin"
-    client.post("/api/auth/register", json={
-        "username": admin_username,
-        "email": "admin@example.com",
-        "password": "securepass123",
-    })
-    r = client.post("/api/auth/login", data={
-        "username": admin_username,
-        "password": "securepass123",
-    })
-    token = r.json()["access_token"]
-    headers = {"Authorization": f"Bearer {token}"}
-    
-    # Make 12 requests quickly
-    status_codes = []
-    for _ in range(12):
-        r = client.get("/api/admin/stats", headers=headers)
-        status_codes.append(r.status_code)
-    
-    # At least one should be 429
-    assert 429 in status_codes
-    
-    # Disable limiter again for other tests
-    limiter.enabled = False
+    try:
+        headers = _admin_headers(client)
+
+        # Make 12 requests quickly
+        status_codes = [
+            client.get("/api/admin/stats", headers=headers).status_code
+            for _ in range(12)
+        ]
+
+        # At least one should be 429
+        assert 429 in status_codes
+    finally:
+        # Disable limiter again for other tests
+        limiter.enabled = False

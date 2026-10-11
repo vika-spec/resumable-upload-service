@@ -1,6 +1,6 @@
 import asyncio
 import os
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from database import SessionLocal
 from logger import get_logger
@@ -13,6 +13,10 @@ storage = StorageService()
 
 CLEANUP_INTERVAL = int(
     os.getenv("CLEANUP_INTERVAL_SECONDS", "300")
+)
+
+UPLOAD_EXPIRY_HOURS = int(
+    os.getenv("UPLOAD_EXPIRY_HOURS", "2")
 )
 
 
@@ -56,6 +60,31 @@ async def _run_cleanup() -> int:
 
         now = datetime.utcnow()
 
+        # ── Recover uploads stuck in "assembling" ──────────────────────────
+        # Background assembly dies with the server process. When an upload
+        # enters "assembling", expires_at is set to a deadline for that state;
+        # if the deadline passes, assembly is assumed lost. The chunks are
+        # still stored, so hand the upload back to the client as "uploading"
+        # with a fresh expiry and let it call /complete again.
+        stuck = (
+            db.query(Upload)
+            .filter(
+                Upload.expires_at < now,
+                Upload.status == UploadStatus.assembling,
+            )
+            .all()
+        )
+
+        for upload in stuck:
+            upload.status = UploadStatus.uploading
+            upload.expires_at = now + timedelta(hours=UPLOAD_EXPIRY_HOURS)
+            log.warning(
+                "assembly_recovered",
+                upload_id=upload.upload_id,
+                filename=upload.filename,
+            )
+
+        # ── Expire stale uploads ───────────────────────────────────────────
         stale = (
             db.query(Upload)
             .filter(

@@ -42,9 +42,17 @@ USER appuser
 
 EXPOSE 8000
 
+# Behind a platform load balancer (Render, Azure, Fly, ...) every request comes
+# from the proxy's IP. Trust its X-Forwarded-For so the per-IP rate limiter sees
+# real client IPs. "*" is appropriate when the container is only reachable
+# through the platform proxy; set FORWARDED_ALLOW_IPS to the proxy's address
+# if the container is also exposed directly.
+ENV FORWARDED_ALLOW_IPS="*"
+
 # Healthcheck - uses curl (more reliable than Python for this)
 HEALTHCHECK --interval=30s --timeout=10s --start-period=10s --retries=3 \
-  CMD curl -f http://localhost:8000/health || exit 1
+  CMD curl -f http://localhost:${PORT:-8000}/health || exit 1
 
-# Use exec form for proper signal handling
-CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
+# Hosting platforms inject PORT; default to 8000 locally. `exec` keeps uvicorn
+# as PID 1 so it receives shutdown signals.
+CMD ["sh", "-c", "exec uvicorn main:app --host 0.0.0.0 --port ${PORT:-8000}"]

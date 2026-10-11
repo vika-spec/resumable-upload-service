@@ -22,6 +22,7 @@ from logger import get_logger
 from routes.admin import router as admin_router
 from routes.auth import router as auth_router
 from routes.uploads import router as upload_router
+from services.auth_service import ensure_admin_user
 from workers.cleanup import start_cleanup_worker
 
 log = get_logger(__name__)
@@ -37,6 +38,13 @@ async def lifespan(app: FastAPI):
     log.info("startup", version=app.version,
              storage="azure" if os.getenv("AZURE_STORAGE_CONNECTION_STRING") else "local")
     Base.metadata.create_all(bind=engine)
+
+    _db = SessionLocal()
+    try:
+        ensure_admin_user(_db)
+    finally:
+        _db.close()
+
     cleanup_task = asyncio.create_task(start_cleanup_worker())
     yield
     cleanup_task.cancel()
@@ -79,15 +87,20 @@ async def request_id_middleware(request: Request, call_next):
 
 @app.get("/health", tags=["ops"])
 async def health_check():
+    db = SessionLocal()
     try:
-        db = SessionLocal()
         db.execute(text("SELECT 1"))
-        db.close()
         storage_backend = "azure" if os.getenv("AZURE_STORAGE_CONNECTION_STRING") else "local"
         return {"status": "healthy", "version": app.version, "storage": storage_backend}
     except Exception as exc:
+        # Log the real error, but don't leak internals (DB host, etc.) to callers.
         log.error("health_check_failed", error=str(exc))
-        return JSONResponse(503, {"status": "unhealthy", "detail": str(exc)})
+        return JSONResponse(
+            status_code=503,
+            content={"status": "unhealthy", "detail": "database unavailable"},
+        )
+    finally:
+        db.close()
 
 app.include_router(auth_router,   prefix="/api", tags=["auth"])
 app.include_router(upload_router, prefix="/api", tags=["uploads"])

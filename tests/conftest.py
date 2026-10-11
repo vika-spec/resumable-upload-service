@@ -11,6 +11,9 @@ import shutil
 
 os.environ.setdefault("DATABASE_URL", "sqlite:///./test_uploads.db")
 os.environ.setdefault("SECRET_KEY",   "test-secret-key-not-for-production")
+# The admin account is created at app startup from these (see ensure_admin_user)
+os.environ.setdefault("ADMIN_USERNAME", "admin")
+os.environ.setdefault("ADMIN_PASSWORD", "securepass123")
 
 import pytest
 from fastapi.testclient import TestClient
