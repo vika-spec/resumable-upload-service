@@ -12,6 +12,10 @@ Built with FastAPI, SQLAlchemy, and JWT auth. Storage is pluggable between local
 
 ## Why this exists
 
+**Live demo:** [https://uploaddemo48213app.azurewebsites.net](https://uploaddemo48213app.azurewebsites.net) &nbsp;|&nbsp; **API docs (Swagger):** [/docs](https://uploaddemo48213app.azurewebsites.net/docs)
+
+> Hosted on Azure App Service with PostgreSQL and Blob Storage using student credits. If the link is slow to load or offline, the instance may be asleep or stopped. See [Quick start](#quick-start) to run it yourself in a minute.
+
 A single `POST` of a multi-gigabyte file fails if the connection drops at 99%. This service makes interruptions cheap:
 
 - **Resumable:** upload state lives on the server, so a client can resume after a crash, a network change, or a closed laptop.
